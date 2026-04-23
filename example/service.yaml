@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: values-pipeline-plugin
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: values-pipeline-plugin
+    app.kubernetes.io/part-of: argocd
+spec:
+  selector:
+    app.kubernetes.io/name: values-pipeline-plugin
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

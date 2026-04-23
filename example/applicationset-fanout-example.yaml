@@ -1,0 +1,71 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform-apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  platform/enabled: "true"
+          - plugin:
+              configMapRef:
+                name: values-pipeline-plugin
+              requeueAfterSeconds: 300
+              input:
+                parameters:
+                  mode: fanout
+                  name: "{{ .name }}"
+                  server: "{{ .server }}"
+                  context:
+                    cluster:
+                      name: "{{ .name }}"
+                      nameNormalized: "{{ .nameNormalized }}"
+                  targets:
+                    - emit:
+                        appName: guestbook
+                        namespace: guestbook
+                        repoURL: https://github.com/argoproj/argocd-example-apps.git
+                        targetRevision: master
+                        path: helm-guestbook
+                      defaults:
+                        domain: aerxd.tech
+                        host: "{{ .appName }}.{{ .name }}.{{ .domain }}"
+                    - emit:
+                        appName: billing
+                        namespace: billing
+                        repoURL: https://github.com/example/platform-apps.git
+                        targetRevision: main
+                        path: charts/billing
+                      defaults:
+                        domain: aerxd.tech
+                        host: "{{ .appName }}.{{ .name }}.{{ .domain }}"
+                  selectorOverrides:
+                    - path: name
+                      overrides:
+                        dev-example:
+                          domain: dev.example.com
+  template:
+    metadata:
+      name: "{{ .appName }}-{{ .name }}"
+    spec:
+      project: default
+      destination:
+        server: "{{ .server }}"
+        namespace: "{{ .namespace }}"
+      source:
+        repoURL: "{{ .repoURL }}"
+        targetRevision: "{{ .targetRevision }}"
+        path: "{{ .path }}"
+        helm:
+          values: |
+            {{- .resolvedValuesYaml | nindent 12 }}
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true

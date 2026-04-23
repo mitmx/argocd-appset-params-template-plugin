@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: values-pipeline-plugin
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: values-pipeline-plugin
+    app.kubernetes.io/part-of: argocd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: values-pipeline-plugin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: values-pipeline-plugin
+        app.kubernetes.io/part-of: argocd
+    spec:
+      serviceAccountName: argocd-applicationset-controller
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: plugin
+          image: ghcr.io/mitmx/argocd-values-pipeline-plugin:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 4355
+          env:
+            - name: TOKEN_FILE
+              value: /var/run/argo/token
+            - name: MAX_TEMPLATE_PASSES
+              value: "4"
+          volumeMounts:
+            - name: token
+              mountPath: /var/run/argo
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: token
+          secret:
+            secretName: values-pipeline-plugin-token
+            items:
+              - key: token
+                path: token
