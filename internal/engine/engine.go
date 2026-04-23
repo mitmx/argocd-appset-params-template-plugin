@@ -2,18 +2,9 @@ package engine
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/maps"
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/render"
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/serialize"
-)
-
-type Mode string
-
-const (
-	ModeResolve Mode = "resolve"
-	ModeFanout  Mode = "fanout"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/maps"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/render"
 )
 
 type Engine struct {
@@ -21,44 +12,33 @@ type Engine struct {
 }
 
 type Request struct {
-	ApplicationSetName string
-	Parameters         map[string]any
-	Values             map[string]any
+	Parameters map[string]any
 }
 
 type spec struct {
-	Mode              Mode
 	Defaults          map[string]any
 	Overrides         map[string]any
 	SelectorOverrides []selectorOverride
 	Context           map[string]any
-	Emit              map[string]any
+	Params            map[string]any
 	Targets           []target
 	Options           options
-	Passthrough       map[string]any
-	RawInput          map[string]any
-	RequestMeta       requestMeta
 }
 
 type selectorOverride struct {
 	Path      string
 	Overrides map[string]map[string]any
+	Default   map[string]any
 }
 
 type target struct {
-	Defaults  map[string]any
-	Overrides map[string]any
 	Context   map[string]any
-	Emit      map[string]any
+	Params    map[string]any
+	Overrides map[string]any
 }
 
 type options struct {
 	MaxTemplatePasses int
-}
-
-type requestMeta struct {
-	ApplicationSetName string
-	InputValues        map[string]any
 }
 
 func New(defaultMaxTemplatePasses int) Engine {
@@ -71,11 +51,11 @@ func New(defaultMaxTemplatePasses int) Engine {
 func (e Engine) Execute(req Request) ([]map[string]any, error) {
 	cfg, err := parseSpec(req, e.defaultMaxTemplatePasses)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse: %w", err)
 	}
 
 	items := cfg.Targets
-	if cfg.Mode == ModeResolve && len(items) == 0 {
+	if len(items) == 0 {
 		items = []target{{}}
 	}
 
@@ -92,71 +72,60 @@ func (e Engine) Execute(req Request) ([]map[string]any, error) {
 
 func (e Engine) resolveTarget(cfg spec, item target) (map[string]any, error) {
 	mergedContext := maps.MergeAll(cfg.Context, item.Context)
-	mergedEmit := maps.MergeAll(cfg.Emit, item.Emit)
+	mergedParams := maps.MergeAll(cfg.Params, item.Params)
 
-	baseValues := maps.MergeAll(cfg.Defaults, item.Defaults, cfg.Overrides)
-	selectionContext := buildTemplateContext(templateContextInput{
-		Values:      baseValues,
-		Context:     mergedContext,
-		Emit:        mergedEmit,
-		Passthrough: cfg.Passthrough,
-		RawInput:    cfg.RawInput,
-		RequestMeta: cfg.RequestMeta,
-	})
-
-	selectedOverrides, err := applySelectorOverrides(cfg.SelectorOverrides, selectionContext)
+	selectedOverrides, err := applySelectorOverrides(cfg.SelectorOverrides, mergedContext, mergedParams)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("selector: %w", err)
 	}
 
-	values := maps.MergeAll(baseValues, selectedOverrides, item.Overrides)
+	result := maps.MergeAll(cfg.Defaults, cfg.Overrides, selectedOverrides, item.Overrides)
 	renderer := render.New(cfg.Options.MaxTemplatePasses)
-	resolvedValues, err := renderer.Resolve(values, func(current map[string]any) map[string]any {
+	resolvedResult, err := renderer.Resolve(result, func(current map[string]any) map[string]any {
 		return buildTemplateContext(templateContextInput{
-			Values:      current,
-			Context:     mergedContext,
-			Emit:        mergedEmit,
-			Passthrough: cfg.Passthrough,
-			RawInput:    cfg.RawInput,
-			RequestMeta: cfg.RequestMeta,
+			Result:  current,
+			Context: mergedContext,
+			Params:  mergedParams,
+			Target:  targetTemplateContext{Context: item.Context, Params: item.Params, Overrides: item.Overrides},
 		})
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("render: %w", err)
 	}
 
-	yamlText, err := serialize.MarshalYAML(resolvedValues)
-	if err != nil {
-		return nil, fmt.Errorf("marshal resolved values: %w", err)
-	}
-
-	out := maps.CloneMap(cfg.Passthrough)
-	out = maps.DeepMerge(out, mergedEmit)
-	out["context"] = maps.CloneMap(mergedContext)
-	out["resolvedValues"] = resolvedValues
-	out["resolvedValuesYaml"] = strings.TrimRight(yamlText, "\n")
-	return out, nil
+	return map[string]any{
+		"context": maps.CloneMap(mergedContext),
+		"params":  maps.CloneMap(mergedParams),
+		"result":  resolvedResult,
+	}, nil
 }
 
-func applySelectorOverrides(selectors []selectorOverride, ctx map[string]any) (map[string]any, error) {
+func applySelectorOverrides(selectors []selectorOverride, contextValues, paramsValues map[string]any) (map[string]any, error) {
+	selectionRoot := map[string]any{
+		"context": maps.CloneMap(contextValues),
+		"params":  maps.CloneMap(paramsValues),
+	}
+
 	result := map[string]any{}
 	for _, selector := range selectors {
-		value, ok, err := maps.LookupPath(ctx, selector.Path)
+		value, ok, err := maps.LookupPath(selectionRoot, selector.Path)
 		if err != nil {
-			return nil, fmt.Errorf("selector path %q: %w", selector.Path, err)
+			return nil, fmt.Errorf("%s: %w", selector.Path, err)
 		}
 		if !ok {
 			continue
 		}
 		key, ok := maps.ToStringKey(value)
 		if !ok {
-			return nil, fmt.Errorf("selector path %q resolved to unsupported type %T", selector.Path, value)
+			return nil, fmt.Errorf("%s resolved to unsupported type %T", selector.Path, value)
 		}
-		override, ok := selector.Overrides[key]
-		if !ok {
+		if override, ok := selector.Overrides[key]; ok {
+			result = maps.DeepMerge(result, override)
 			continue
 		}
-		result = maps.DeepMerge(result, override)
+		if len(selector.Default) > 0 {
+			result = maps.DeepMerge(result, selector.Default)
+		}
 	}
 	return result, nil
 }

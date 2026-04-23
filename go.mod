@@ -1,3 +1,3 @@
-module github.com/mitmx/argocd-values-pipeline-plugin
+module github.com/mitmx/argocd-appset-params-template-plugin
 
-go 1.22
+go 1.22.0

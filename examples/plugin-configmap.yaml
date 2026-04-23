@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-appset-params-template-plugin
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-appset-params-template-plugin
+    app.kubernetes.io/part-of: argocd
+data:
+  baseUrl: http://argocd-appset-params-template-plugin.argocd.svc.cluster.local
+  requestTimeout: "60"
+  token: $argocd-appset-params-template-plugin-token:token

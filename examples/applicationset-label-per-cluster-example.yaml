@@ -1,0 +1,76 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: clickhouse-operator
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  clickhouse-operator/enabled: "true"
+
+          - plugin:
+              configMapRef:
+                name: argocd-appset-params-template-plugin
+              input:
+                parameters:
+                  context:
+                    cluster:
+                      name: "{{ .name }}"
+                      nameNormalized: "{{ .nameNormalized }}"
+
+                  params:
+                    appName: clickhouse-operator
+                    namespace: clickhouse-operator
+                    repoURL: https://docs.altinity.com/clickhouse-operator
+                    chart: altinity-clickhouse-operator
+                    targetRevision: 0.26.2
+
+                  defaults:
+                    serviceMonitor:
+                      enabled: false
+                    operator:
+                      resources: {}
+                    metrics:
+                      resources: {}
+
+                  selectorOverrides:
+                    - path: context.cluster.name
+                      overrides:
+                        do-dev0-dev-ctrl1:
+                          serviceMonitor:
+                            enabled: true
+                          operator:
+                            resources:
+                              requests:
+                                cpu: 100m
+                                memory: 320Mi
+                          metrics:
+                            resources:
+                              requests:
+                                cpu: 50m
+                                memory: 64Mi
+
+  template:
+    metadata:
+      name: "{{ .params.appName }}-{{ .context.cluster.nameNormalized }}"
+    spec:
+      project: default
+      destination:
+        name: "{{ .context.cluster.name }}"
+        namespace: "{{ .params.namespace }}"
+      source:
+        repoURL: "{{ .params.repoURL }}"
+        chart: "{{ .params.chart }}"
+        targetRevision: "{{ .params.targetRevision }}"
+        helm:
+          releaseName: "{{ .params.appName }}"
+          values: |
+            {{- toYaml .result | nindent 12 }}

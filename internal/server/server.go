@@ -3,13 +3,14 @@ package server
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
 	"strings"
 
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/config"
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/engine"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/config"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/engine"
 )
 
 type Server struct {
@@ -60,31 +61,30 @@ func (s *Server) handleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, s.cfg.MaxBodyBytes))
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "read request body: " + err.Error()})
-		return
-	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxBodyBytes)
+	defer r.Body.Close()
 
 	var req executeRequest
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder := json.NewDecoder(r.Body)
 	decoder.UseNumber()
 	if err := decoder.Decode(&req); err != nil {
+		if isTooLarge(err) {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errorResponse{Error: "request body exceeds configured limit"})
+			return
+		}
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: "decode request: " + err.Error()})
 		return
 	}
+	if err := ensureSingleJSONDocument(decoder); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
 	if req.Input.Parameters == nil {
 		req.Input.Parameters = map[string]any{}
 	}
-	if req.Input.Values == nil {
-		req.Input.Values = map[string]any{}
-	}
 
-	params, err := s.engine.Execute(engine.Request{
-		ApplicationSetName: req.ApplicationSetName,
-		Parameters:         normalizeNumbers(req.Input.Parameters).(map[string]any),
-		Values:             normalizeNumbers(req.Input.Values).(map[string]any),
-	})
+	params, err := s.engine.Execute(engine.Request{Parameters: normalizeNumbers(req.Input.Parameters).(map[string]any)})
 	if err != nil {
 		log.Printf("execute error: %v", err)
 		writeJSON(w, http.StatusBadRequest, errorResponse{Error: err.Error()})
@@ -108,6 +108,21 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func ensureSingleJSONDocument(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err == nil {
+		return errors.New("decode request: unexpected trailing JSON data")
+	} else if !errors.Is(err, io.EOF) {
+		return errors.New("decode request: invalid trailing JSON data")
+	}
+	return nil
+}
+
+func isTooLarge(err error) bool {
+	var maxBytesErr *http.MaxBytesError
+	return errors.As(err, &maxBytesErr)
 }
 
 func normalizeNumbers(v any) any {

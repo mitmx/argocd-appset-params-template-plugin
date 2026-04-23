@@ -1,0 +1,70 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: kviklet
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - clusterName: do-prod0-prod-ctrl1
+                  project: foo
+                  domain: kviklet.prod.foo
+                - clusterName: do-prod0-prod-ctrl1
+                  project: baz
+                  domain: kviklet.prod.baz
+                - clusterName: dev-foo
+                  project: foo
+                  domain: kviklet.dev0.foo
+
+          - plugin:
+              configMapRef:
+                name: argocd-appset-params-template-plugin
+              input:
+                parameters:
+                  context:
+                    cluster:
+                      name: "{{ .clusterName }}"
+                    tenant:
+                      project: "{{ .project }}"
+                      domain: "{{ .domain }}"
+
+                  params:
+                    appName: kviklet
+                    repoURL: https://github.com/kviklet/kviklet.git
+                    targetRevision: "0.7.0"
+                    path: charts/kviklet
+
+                  defaults:
+                    fullnameOverride: kviklet
+                    externalSecretName: kviklet-secret
+                    ingress:
+                      enabled: false
+                    postgres:
+                      enabled: false
+                    image:
+                      tag: "0.7.0"
+                    appUrl: "https://{{ .context.tenant.domain }}"
+
+  template:
+    metadata:
+      name: "{{ .params.appName }}-{{ .context.cluster.name }}-{{ .context.tenant.project }}"
+    spec:
+      project: default
+      destination:
+        name: "{{ .context.cluster.name }}"
+        namespace: "kviklet-{{ .context.tenant.project }}"
+      source:
+        repoURL: "{{ .params.repoURL }}"
+        targetRevision: "{{ .params.targetRevision }}"
+        path: "{{ .params.path }}"
+        helm:
+          releaseName: kviklet
+          values: |
+            {{- toYaml .result | nindent 12 }}

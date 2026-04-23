@@ -1,0 +1,91 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: rook-ceph-stack
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions:
+    - missingkey=error
+
+  generators:
+    - matrix:
+        generators:
+          - clusters:
+              selector:
+                matchLabels:
+                  rook-ceph/enabled: "true"
+
+          - plugin:
+              configMapRef:
+                name: argocd-appset-params-template-plugin
+              input:
+                parameters:
+                  context:
+                    cluster:
+                      name: "{{ .name }}"
+                      nameNormalized: "{{ .nameNormalized }}"
+
+                  params:
+                    appName: rook-ceph
+                    namespace: rook-ceph
+                    repoURL: https://github.com/rook/rook.git
+                    targetRevision: v1.19.3
+
+                  defaults:
+                    operator:
+                      crds:
+                        enabled: true
+                      resources: {}
+                    cluster:
+                      operatorNamespace: rook-ceph
+                      toolbox:
+                        enabled: true
+                      monitoring:
+                        enabled: true
+                      cephClusterSpec:
+                        mon:
+                          count: 3
+                        mgr:
+                          count: 2
+
+                  selectorOverrides:
+                    - path: context.cluster.name
+                      overrides:
+                        dev-foo:
+                          operator:
+                            resources:
+                              requests:
+                                cpu: 100m
+                                memory: 256Mi
+                          cluster:
+                            cephClusterSpec:
+                              mon:
+                                count: 1
+                              mgr:
+                                count: 1
+
+  template:
+    metadata:
+      name: "{{ .params.appName }}-{{ .context.cluster.nameNormalized }}"
+    spec:
+      project: default
+      destination:
+        name: "{{ .context.cluster.name }}"
+        namespace: "{{ .params.namespace }}"
+      sources:
+        - repoURL: "{{ .params.repoURL }}"
+          targetRevision: "{{ .params.targetRevision }}"
+          path: deploy/charts/rook-ceph
+          helm:
+            releaseName: rook-ceph
+            values: |
+              {{- toYaml (.result.operator | default dict) | nindent 14 }}
+
+        - repoURL: "{{ .params.repoURL }}"
+          targetRevision: "{{ .params.targetRevision }}"
+          path: deploy/charts/rook-ceph-cluster
+          helm:
+            releaseName: rook-ceph-cluster
+            values: |
+              {{- toYaml (.result.cluster | default dict) | nindent 14 }}

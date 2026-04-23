@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/maps"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/maps"
 )
 
 func MarshalJSONPretty(v any) (string, error) {

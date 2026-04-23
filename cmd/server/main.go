@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/config"
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/engine"
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/server"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/config"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/engine"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/server"
 )
 
 func main() {
@@ -27,7 +31,19 @@ func main() {
 		IdleTimeout:       cfg.IdleTimeout,
 	}
 
-	log.Printf("values-pipeline-plugin listening on %s", cfg.Addr)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("shutdown: %v", err)
+		}
+	}()
+
+	log.Printf("argocd-appset-params-template-plugin listening on %s", cfg.Addr)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("listen: %v", err)
 	}

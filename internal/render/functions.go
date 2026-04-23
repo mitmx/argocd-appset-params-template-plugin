@@ -6,8 +6,8 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/maps"
-	"github.com/mitmx/argocd-values-pipeline-plugin/internal/serialize"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/maps"
+	"github.com/mitmx/argocd-appset-params-template-plugin/internal/serialize"
 )
 
 func FuncMap() template.FuncMap {
@@ -29,8 +29,12 @@ func FuncMap() template.FuncMap {
 		"contains":  strings.Contains,
 		"hasPrefix": strings.HasPrefix,
 		"hasSuffix": strings.HasSuffix,
-		"quote": func(v any) string {
-			return fmt.Sprintf("%q", fmt.Sprint(v))
+		"quote": func(v any) (RawJSON, error) {
+			b, err := json.Marshal(fmt.Sprint(v))
+			if err != nil {
+				return "", err
+			}
+			return RawJSON(b), nil
 		},
 		"squote": func(v any) string {
 			return "'" + strings.ReplaceAll(fmt.Sprint(v), "'", "''") + "'"
@@ -39,26 +43,33 @@ func FuncMap() template.FuncMap {
 			return v
 		},
 		"dict": dict,
-		"toJson": func(v any) (string, error) {
+		"toJson": func(v any) (RawJSON, error) {
 			b, err := json.Marshal(v)
 			if err != nil {
 				return "", err
 			}
-			return string(b), nil
+			return RawJSON(b), nil
 		},
-		"toPrettyJson": serialize.MarshalJSONPretty,
-		"toYaml":       serialize.MarshalYAML,
-		"indent":       indent,
-		"nindent":      nindent,
-		"join":         join,
-		"split":        strings.Split,
-		"normalize":    maps.NormalizeName,
+		"toPrettyJson": func(v any) (RawJSON, error) {
+			b, err := json.MarshalIndent(v, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			return RawJSON(b), nil
+		},
+		"toYaml":    serialize.MarshalYAML,
+		"indent":    indent,
+		"nindent":   nindent,
+		"join":      join,
+		"split":     strings.Split,
+		"normalize": maps.NormalizeName,
 		"required": func(msg string, value any) (any, error) {
 			if maps.IsZero(value) {
 				return nil, fmt.Errorf(msg)
 			}
 			return value, nil
 		},
+		"__typed__": typedJSON,
 	}
 }
 
